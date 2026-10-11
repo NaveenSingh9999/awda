@@ -1,0 +1,40 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# awda — opencode serve wrapped as an anywhere API
+set -euo pipefail
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR"
+[ -f .env ] && set -a && . ./.env && set +a
+OC_PORT="${OPENCODE_PORT:-4096}"
+API_PORT="${AWDA_PORT:-4098}"
+SERVER_PATTERN="opencode [s]erve --port $OC_PORT"
+API_PATTERN="server\.py"
+G='\033[0;32m'; R='\033[0;31m'; C='\033[0;36m'; B='\033[1m'; NC='\033[0m'
+info() { echo -e "${C}▸${NC} $*"; }
+ok()   { echo -e "${G}✔${NC} $*"; }
+err()  { echo -e "${R}✖${NC} $*"; }
+pids_of() { pgrep -f "$1" 2>/dev/null | grep -v "^$$$" | grep -v "^$PPID$" || true; }
+wait_url() { for i in $(seq 1 60); do curl -sf --max-time 3 "$1" >/dev/null 2>&1 && return 0; sleep 0.5; done; return 1; }
+cmd_start() {
+  pids=$(pids_of "$SERVER_PATTERN"); [ -n "$pids" ] || {
+    info "Starting opencode serve on $OC_PORT ..."
+    setsid nohup opencode serve --port "$OC_PORT" --hostname 127.0.0.1 >"$DIR/serve.log" 2>&1 </dev/null >/dev/null 2>&1 &
+    wait_url "http://127.0.0.1:$OC_PORT/config" || { err "serve failed — cat serve.log"; exit 1; }
+    ok "serve ready";
+  }
+  pkill -f "python3 server\.py" 2>/dev/null || true; sleep 1
+  info "Starting awda API on $API_PORT ..."
+  setsid nohup python3 server.py >"$DIR/api.log" 2>&1 </dev/null >/dev/null 2>&1 &
+  wait_url "http://127.0.0.1:$API_PORT/health" || { err "api failed — cat api.log"; exit 1; }
+  ok "awda live → http://127.0.0.1:$API_PORT"
+}
+cmd_stop() { pkill -f "python3 server\.py" 2>/dev/null || true; ok "api stopped (serve left running)"; }
+cmd_status() {
+  [ -n "$(pids_of "$SERVER_PATTERN")" ] && ok "serve running" || err "serve down"
+  [ -n "$(pids_of "$API_PATTERN")" ] && ok "api running" || err "api down"
+}
+case "${1:-help}" in
+  start) cmd_start;; stop) cmd_stop;; status) cmd_status;;
+  logs) tail -f "$DIR/${2:-api}.log";;
+  restart|doctor) python3 "$DIR/awda.py" "$1";;
+  *) echo "usage: awda {start|stop|restart|status|logs [api|serve]|doctor}";;
+esac

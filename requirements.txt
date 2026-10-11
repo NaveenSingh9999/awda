@@ -1,0 +1,3 @@
+aiohttp>=3.9.0
+python-dotenv>=1.0.0
+pillow>=10.0.0  # only needed to generate test images; server takes raw bytes
